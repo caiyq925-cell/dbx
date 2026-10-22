@@ -137,6 +137,7 @@ const editorSettingCategoryOverrides: Partial<Record<string, BackupSettingsCateg
   sidebarBrowseObjectsOnDatabaseActivationMigrationVersion: "navigation",
   rememberedConnectionDatabases: "navigation",
   sidebarShowConnectionNotes: "navigation",
+  sidebarShowConnectionEndpoints: "navigation",
   customColumnFormatters: "data",
   columnFormatters: "data",
   pluginShortcuts: "shortcuts",

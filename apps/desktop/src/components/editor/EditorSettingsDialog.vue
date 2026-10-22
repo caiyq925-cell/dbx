@@ -1022,6 +1022,7 @@ const editRedisKeyTemplates = ref(normalizeRedisKeyTemplates(settingsStore.edito
 const editRedisDatabaseDisplayLimit = ref(settingsStore.editorSettings.redisDatabaseDisplayLimit);
 const editSidebarObjectInfoMode = ref<SidebarObjectInfoMode>(settingsStore.editorSettings.sidebarObjectInfoMode);
 const editSidebarAllowHorizontalScroll = ref(settingsStore.editorSettings.sidebarAllowHorizontalScroll);
+const editSidebarShowConnectionEndpoints = ref(settingsStore.editorSettings.sidebarShowConnectionEndpoints);
 const editSidebarShowTooltips = ref(settingsStore.editorSettings.sidebarShowTooltips);
 const editSidebarShowUserAdmin = ref(settingsStore.editorSettings.sidebarShowUserAdmin);
 const editSidebarIndent = ref(settingsStore.editorSettings.sidebarIndent);
@@ -1318,6 +1319,7 @@ function currentEditorSettingsDraft(): EditorSettingsDraft {
     autoUpdatePlugins: editAutoUpdatePlugins.value,
     sidebarObjectInfoMode: editSidebarObjectInfoMode.value,
     sidebarAllowHorizontalScroll: editSidebarAllowHorizontalScroll.value,
+    sidebarShowConnectionEndpoints: editSidebarShowConnectionEndpoints.value,
     sidebarShowTooltips: editSidebarShowTooltips.value,
     sidebarShowUserAdmin: editSidebarShowUserAdmin.value,
     sidebarIndent: editSidebarIndent.value,
@@ -2024,6 +2026,7 @@ function syncEditorSettingsDraftFromStore() {
   editRedisDatabaseDisplayLimit.value = settingsStore.editorSettings.redisDatabaseDisplayLimit;
   editSidebarObjectInfoMode.value = settingsStore.editorSettings.sidebarObjectInfoMode;
   editSidebarAllowHorizontalScroll.value = settingsStore.editorSettings.sidebarAllowHorizontalScroll;
+  editSidebarShowConnectionEndpoints.value = settingsStore.editorSettings.sidebarShowConnectionEndpoints;
   editSidebarShowTooltips.value = settingsStore.editorSettings.sidebarShowTooltips;
   editSidebarShowUserAdmin.value = settingsStore.editorSettings.sidebarShowUserAdmin;
   editSidebarIndent.value = settingsStore.editorSettings.sidebarIndent;
@@ -2192,6 +2195,7 @@ const editorSettingsDraftRefs: EditorSettingsDraftRefMap = {
   autoUpdatePlugins: editAutoUpdatePlugins,
   sidebarObjectInfoMode: editSidebarObjectInfoMode,
   sidebarAllowHorizontalScroll: editSidebarAllowHorizontalScroll,
+  sidebarShowConnectionEndpoints: editSidebarShowConnectionEndpoints,
   sidebarShowTooltips: editSidebarShowTooltips,
   sidebarShowUserAdmin: editSidebarShowUserAdmin,
   sidebarIndent: editSidebarIndent,
@@ -2767,6 +2771,7 @@ function resetDefaultsForTab(tab: SettingsCategory) {
     editObjectBrowserAutoOpenDetailPanel.value = DEFAULT_EDITOR_SETTINGS.objectBrowserAutoOpenDetailPanel;
     editSidebarObjectInfoMode.value = DEFAULT_EDITOR_SETTINGS.sidebarObjectInfoMode;
     editSidebarAllowHorizontalScroll.value = DEFAULT_EDITOR_SETTINGS.sidebarAllowHorizontalScroll;
+    editSidebarShowConnectionEndpoints.value = DEFAULT_EDITOR_SETTINGS.sidebarShowConnectionEndpoints;
     editSidebarShowTooltips.value = DEFAULT_EDITOR_SETTINGS.sidebarShowTooltips;
     editSidebarShowUserAdmin.value = DEFAULT_EDITOR_SETTINGS.sidebarShowUserAdmin;
     editSidebarIndent.value = DEFAULT_EDITOR_SETTINGS.sidebarIndent;
@@ -2994,6 +2999,7 @@ function resetAllDefaults() {
   editAutoUpdatePlugins.value = DEFAULT_EDITOR_SETTINGS.autoUpdatePlugins;
   editSidebarObjectInfoMode.value = DEFAULT_EDITOR_SETTINGS.sidebarObjectInfoMode;
   editSidebarAllowHorizontalScroll.value = DEFAULT_EDITOR_SETTINGS.sidebarAllowHorizontalScroll;
+  editSidebarShowConnectionEndpoints.value = DEFAULT_EDITOR_SETTINGS.sidebarShowConnectionEndpoints;
   editSidebarShowTooltips.value = DEFAULT_EDITOR_SETTINGS.sidebarShowTooltips;
   editSidebarShowUserAdmin.value = DEFAULT_EDITOR_SETTINGS.sidebarShowUserAdmin;
   editSidebarIndent.value = DEFAULT_EDITOR_SETTINGS.sidebarIndent;
@@ -9396,6 +9402,17 @@ onUnmounted(() => {
                   </HelpTooltip>
                 </div>
                 <Switch id="sidebar-allow-horizontal-scroll" v-model="editSidebarAllowHorizontalScroll" />
+              </div>
+              <div class="settings-item flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+                <div class="flex items-center gap-2">
+                  <Label for="sidebar-show-connection-endpoints">
+                    {{ t("settings.sidebarShowConnectionEndpoints") }}
+                  </Label>
+                  <HelpTooltip :label="t('settings.sidebarShowConnectionEndpoints')">
+                    {{ t("settings.sidebarShowConnectionEndpointsDescription") }}
+                  </HelpTooltip>
+                </div>
+                <Switch id="sidebar-show-connection-endpoints" v-model="editSidebarShowConnectionEndpoints" />
               </div>
               <div class="settings-item flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
                 <div class="flex items-center gap-2">

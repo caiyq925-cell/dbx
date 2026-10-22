@@ -89,6 +89,7 @@ import { effectiveDatabaseTypeForConnection } from "@/lib/database/jdbcDialect";
 import { isTableVGroupGroupableRowType, selectedTableVGroupMoveTargets, tableVGroupIdFromNodeId } from "@/lib/table/tableVGroup";
 import { findTreeNodeById } from "@/lib/sql/newQueryContext";
 import { resolveTableVGroupDropTarget, setTableVGroupDropTargetNodeId, tableVGroupDropTargetNodeId } from "@/lib/sidebar/sidebarTableVGroupDrag";
+import { connectionEndpointUserLabel } from "@/lib/connection/connectionPresentation";
 import { isExecuteSqlShortcut, isFocusSearchShortcut } from "@/lib/editor/keyboardShortcuts";
 import { connectionDetailRows, type ConnectionDetailRow } from "@/lib/connection/connectionDetailRows";
 import { hexToRgba } from "@/lib/common/color";
@@ -805,6 +806,11 @@ function isLoginUserNode(): boolean {
 const trailingComment = computed(() => {
   if (!settingsStore.editorSettings.sidebarObjectInfoMode.startsWith("comment-")) return null;
   return sidebarTreeNodeComment(activeNode.value, settingsStore.editorSettings.sidebarShowConnectionNotes);
+});
+
+const connectionEndpointText = computed(() => {
+  if (activeNode.value.type !== "connection" || !settingsStore.editorSettings.sidebarShowConnectionEndpoints) return null;
+  return connectionEndpointUserLabel(activeNode.value.connectionId ? connectionStore.getConfig(activeNode.value.connectionId) : undefined) || null;
 });
 
 function isRightAlignedComment(): boolean {
@@ -1681,6 +1687,7 @@ function onKeydown(event: KeyboardEvent) {
               ]"
               >{{ visibleLabel(node) }}</span
             >
+            <span v-if="connectionEndpointText && !isRenamingConnection" class="sidebar-object-comment min-w-0 shrink truncate" :class="{ 'sidebar-object-comment--windows': useWindowsSidebarCommentFont }" :title="connectionEndpointText">{{ connectionEndpointText }}</span>
             <span
               v-if="node.type === 'column' && node.meta"
               class="shrink-0 rounded px-1 text-[10px] leading-4"
