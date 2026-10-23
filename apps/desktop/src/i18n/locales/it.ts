@@ -7117,6 +7117,7 @@ export default withEnglishFallback({
     previewReadyPartial: "Previewed {rows} rows, {columns} columns; total will be confirmed during import",
     previewPartial: "Previewed {rows} rows",
     rowsImported: "rows imported",
+    currentFile: "File corrente",
     file: "File",
     rows: "Righe",
     mapped: "Mappata",

@@ -8349,6 +8349,7 @@ export default {
     previewReadyPartial: "Previewed {rows} rows, {columns} columns; total will be confirmed during import",
     previewPartial: "Previewed {rows} rows",
     rowsImported: "rows imported",
+    currentFile: "Current file",
     file: "File",
     rows: "Rows",
     mapped: "Mapped",
