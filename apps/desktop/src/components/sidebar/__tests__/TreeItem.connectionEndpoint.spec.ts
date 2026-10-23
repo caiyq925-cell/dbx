@@ -84,6 +84,7 @@ afterEach(() => {
   editorSettings.sidebarShowConnectionEndpoints = false;
   editorSettings.sidebarShowConnectionNotes = false;
   editorSettings.sidebarObjectInfoMode = "comment-inline";
+  editorSettings.sidebarAllowHorizontalScroll = false;
 });
 
 function createTreeRuntimeHost(): SidebarTreeRuntimeHost {
@@ -202,5 +203,29 @@ describe("TreeItem connection endpoint display", () => {
     const container = mountTreeItem({ id: "table-1", label: "orders", type: "table", connectionId: endpointConnection.id, database: "shop" });
     await nextTick();
     expect(rowText(container, "table-1")).not.toContain("192.168.1.10:5432");
+  });
+
+  it("widens the row instead of truncating when horizontal scroll is enabled", async () => {
+    editorSettings.sidebarShowConnectionEndpoints = true;
+    editorSettings.sidebarAllowHorizontalScroll = true;
+    const container = mountTreeItem(connectionNode());
+    await nextTick();
+    expect(container.querySelector('[data-node-id="connection-1"]')?.className).toContain("w-max");
+  });
+
+  it("keeps the row constrained when horizontal scroll is off", async () => {
+    editorSettings.sidebarShowConnectionEndpoints = true;
+    const container = mountTreeItem(connectionNode());
+    await nextTick();
+    expect(container.querySelector('[data-node-id="connection-1"]')?.className).not.toContain("w-max");
+  });
+
+  it("stays constrained with a visible note even when horizontal scroll is on", async () => {
+    editorSettings.sidebarShowConnectionEndpoints = true;
+    editorSettings.sidebarAllowHorizontalScroll = true;
+    editorSettings.sidebarShowConnectionNotes = true;
+    const container = mountTreeItem({ ...connectionNode(), comment: "primary replica" });
+    await nextTick();
+    expect(container.querySelector('[data-node-id="connection-1"]')?.className).not.toContain("w-max");
   });
 });

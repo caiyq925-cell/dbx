@@ -35,6 +35,12 @@ describe("sidebar tree item layout", () => {
     expect(sidebarTreeNaturalContentWidth([row], measure)).toBe(64 + 8 + 54 + 200 + 16 + 7000 + 8 + 28 + 24);
   });
 
+  it("lets a connection row expand for horizontal scrolling unless a comment is visible", () => {
+    expect(usesFullWidthTreeLabel("connection", true)).toBe(true);
+    expect(usesFullWidthTreeLabel("connection", false)).toBe(false);
+    expect(usesFullWidthTreeLabel("connection", true, true)).toBe(false);
+  });
+
   it("shows connection notes only after the user opts in", () => {
     const connection: TreeNode = { id: "connection-1", label: "MySQL", type: "connection", comment: "Production" };
     expect(sidebarTreeNodeComment(connection, false)).toBeNull();

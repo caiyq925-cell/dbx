@@ -95,6 +95,7 @@ import { openSidebarDangerDialog } from "@/lib/sidebar/sidebarDangerDialog";
 import { resetSidebarTreeDialogState } from "./sidebarTreeDialogState";
 import { SidebarDdlViewDialog, SidebarElasticsearchIndexMetadataDialog, SidebarObjectSourceDialog, SidebarProcedureExecutionDialog, SidebarVisibleDatabasesDialog, SidebarVisibleNacosNamespacesDialog, SidebarVisibleSchemasDialog } from "./sidebarAsyncDialogs";
 import { sortConnectionListForDisplay } from "@/lib/sidebar/connectionListSort";
+import { connectionEndpointUserLabel } from "@/lib/connection/connectionPresentation";
 import { sidebarDisplayTableName } from "@/lib/sidebar/sidebarTableNameDisplay";
 import { sidebarTreeDisplayLabel, sidebarTreeSecondaryValue } from "@/lib/sidebar/sidebarTreeLabel";
 import { canTreeNodePin, sidebarPinnedActionSlotWidthPx, alignedSidebarCommentLabelWidths, isSidebarCommentAlignableNode, sidebarTreeNaturalContentWidth, sidebarTreeNodeComment, usesFullWidthTreeLabel } from "@/lib/sidebar/sidebarTreeItemLayout";
@@ -861,24 +862,15 @@ function scheduleSidebarCommentLabelMeasure() {
 // Keep text measurement independent of mounted TreeItems so scrolling cannot
 // change the horizontal range or truncate a newly materialized row.
 const sidebarTreeNaturalWidthItems = computed(() =>
-  sidebarTreeLeadingWidthItems.value.map((item) => {
-    const { depth, node } = item;
-    const mode = settingsStore.editorSettings.sidebarObjectInfoMode;
-    const comment = mode.startsWith("comment-") ? (sidebarTreeNodeComment(node, settingsStore.editorSettings.sidebarShowConnectionNotes) ?? undefined) : undefined;
-    const config = node.connectionId ? store.getConfig(node.connectionId) : undefined;
-    const badges = [...item.badges];
-    const leadingExtraWidth = item.leadingExtraWidth + (node.pinned || store.isTreeNodePinned(node) ? sidebarPinnedActionSlotWidthPx : 0);
-    let trailingWidth = showSidebarRowProductionBadge(node, config) && !isSidebarProductionContainer(node) ? 24 : 0;
-    // Reserve status/control slots regardless of transient connected/loading
-    // state, avoiding horizontal jumps when a connection changes status.
-    if (node.type === "database") trailingWidth += 14;
-    if (node.type === "connection") {
-      trailingWidth += 38;
-      if (config?.read_only) badges.push(t("connection.readOnlyBadge"));
-    }
     return {
       ...item,
       depth,
+      // 连接行的自然宽度需要涵盖 endpoint 文本与两字宽间隔（仅用于测量，渲染由 TreeItem 完成）。
+      // 全角空格近似 2em 间隔；endpoint 实际渲染字号更小（0.85em），测量按行字号略高估，安全。
+      label:
+        node.type === "connection" && settingsStore.editorSettings.sidebarShowConnectionEndpoints
+          ? [item.label, "　　", connectionEndpointUserLabel(config)].join("").trimEnd()
+          : item.label,
       usesNaturalWidth: usesFullWidthTreeLabel(node.type, settingsStore.editorSettings.sidebarAllowHorizontalScroll),
       comment,
       rightAlignedComment: mode === "comment-right",
