@@ -1687,7 +1687,7 @@ function onKeydown(event: KeyboardEvent) {
               ]"
               >{{ visibleLabel(node) }}</span
             >
-            <span v-if="connectionEndpointText && !isRenamingConnection" class="sidebar-connection-endpoint" :class="usesFullWidthLabel ? 'shrink-0 whitespace-nowrap' : 'min-w-0 truncate sidebar-connection-endpoint--truncate'" :title="connectionEndpointText">{{ connectionEndpointText }}</span>
+            <span v-if="connectionEndpointText && !isRenamingConnection" class="sidebar-connection-endpoint flex-1 min-w-0 truncate" :class="{ 'shrink-0 whitespace-nowrap': usesFullWidthLabel }" :title="connectionEndpointText">{{ connectionEndpointText }}</span>
             <span
               v-if="node.type === 'column' && node.meta"
               class="shrink-0 rounded px-1 text-[10px] leading-4"
@@ -1870,11 +1870,6 @@ function onKeydown(event: KeyboardEvent) {
   opacity: 0.7;
   /* Two name-sized characters of gap; this element's own font is 0.85em, so scale the 2em back to the row font. */
   margin-left: calc(2em / 0.85);
-}
-
-.sidebar-connection-endpoint--truncate {
-  /* Absorb the row's entire overflow before the connection name is allowed to truncate. */
-  flex-shrink: 999;
 }
 
 .tree-connection-label {

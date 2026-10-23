@@ -220,12 +220,13 @@ describe("TreeItem connection endpoint display", () => {
     expect(container.querySelector('[data-node-id="connection-1"]')?.className).not.toContain("w-max");
   });
 
-  it("lets the endpoint absorb overflow in constrained rows so the name keeps its width", async () => {
+  it("grows the endpoint from a zero basis in constrained rows so the name keeps its width", async () => {
     editorSettings.sidebarShowConnectionEndpoints = true;
     const container = mountTreeItem(connectionNode());
     await nextTick();
     const endpoint = container.querySelector(".sidebar-connection-endpoint");
-    expect(endpoint?.className).toContain("sidebar-connection-endpoint--truncate");
+    expect(endpoint?.className).toContain("flex-1");
+    expect(endpoint?.className).toContain("min-w-0");
     expect(endpoint?.className).not.toContain("whitespace-nowrap");
   });
 
