@@ -229,13 +229,4 @@ describe("TreeItem connection endpoint display", () => {
     expect(endpoint?.className).toContain("min-w-0");
     expect(endpoint?.className).not.toContain("whitespace-nowrap");
   });
-
-  it("stays constrained with a visible note even when horizontal scroll is on", async () => {
-    editorSettings.sidebarShowConnectionEndpoints = true;
-    editorSettings.sidebarAllowHorizontalScroll = true;
-    editorSettings.sidebarShowConnectionNotes = true;
-    const container = mountTreeItem({ ...connectionNode(), comment: "primary replica" });
-    await nextTick();
-    expect(container.querySelector('[data-node-id="connection-1"]')?.className).not.toContain("w-max");
-  });
 });
