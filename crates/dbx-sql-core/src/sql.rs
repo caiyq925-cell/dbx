@@ -1864,10 +1864,27 @@ fn find_sqlserver_statement_at_cursor(sql: &str, cursor_pos: usize) -> String {
 
 fn starts_with_sqlserver_control_flow_batch(sql: &str) -> bool {
     let tokens = first_sql_tokens(sql, 128);
-    tokens.first().is_some_and(|token| token.eq_ignore_ascii_case("IF"))
-        && tokens.iter().any(|token| token.eq_ignore_ascii_case("ELSE"))
-        && tokens.iter().any(|token| token.eq_ignore_ascii_case("BEGIN"))
-        && tokens.iter().any(|token| token.eq_ignore_ascii_case("END"))
+    let Some(first) = tokens.first() else {
+        return false;
+    };
+    if first.eq_ignore_ascii_case("IF") {
+        return tokens.iter().any(|token| token.eq_ignore_ascii_case("ELSE"))
+            && tokens.iter().any(|token| token.eq_ignore_ascii_case("BEGIN"))
+            && tokens.iter().any(|token| token.eq_ignore_ascii_case("END"));
+    }
+    // A top-level `BEGIN` block (`BEGIN ... END`, `BEGIN TRY ... END TRY BEGIN
+    // CATCH ... END CATCH`) is one batch the same way an `IF`/`WHILE` batch is
+    // (#13051). `BEGIN` keywords that start a transaction or conversation have
+    // no matching `END` and stay split per statement.
+    if first.eq_ignore_ascii_case("BEGIN") {
+        let opens_block = tokens.get(1).is_some_and(|token| {
+            !["TRANSACTION", "TRAN", "DISTRIBUTED", "DIALOG", "CONVERSATION"]
+                .iter()
+                .any(|keyword| token.eq_ignore_ascii_case(keyword))
+        });
+        return opens_block && tokens.iter().any(|token| token.eq_ignore_ascii_case("END"));
+    }
+    false
 }
 
 pub fn starts_with_sqlserver_module_ddl(sql: &str) -> bool {
@@ -7089,6 +7106,46 @@ END";
 
         assert_eq!(super::find_statement_at_cursor_for_database(sql, update_cursor, DatabaseType::SqlServer), sql);
         assert_eq!(super::find_statement_at_cursor_for_database(sql, add_cursor, DatabaseType::SqlServer), sql);
+    }
+
+    // #13051: a top-level BEGIN TRY ... END TRY BEGIN CATCH ... END CATCH
+    // script is one batch, the same as an IF/ELSE control-flow batch.
+    #[test]
+    fn sqlserver_current_statement_keeps_top_level_try_catch_batch() {
+        let sql = "\
+BEGIN TRY
+    BEGIN TRANSACTION;
+    UPDATE dbo.Documents SET Deleted = 0 WHERE Deleted = 1;
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+    THROW;
+END CATCH";
+        let update_cursor = sql[..sql.find("UPDATE dbo.Documents").unwrap()].encode_utf16().count();
+        let rollback_cursor = sql[..sql.find("ROLLBACK").unwrap()].encode_utf16().count();
+
+        assert_eq!(super::find_statement_at_cursor_for_database(sql, update_cursor, DatabaseType::SqlServer), sql);
+        assert_eq!(super::find_statement_at_cursor_for_database(sql, rollback_cursor, DatabaseType::SqlServer), sql);
+    }
+
+    #[test]
+    fn sqlserver_current_statement_keeps_top_level_plain_begin_block() {
+        let sql = "BEGIN\n  SELECT 1;\n  SELECT 2;\nEND";
+        let cursor = sql[..sql.find("SELECT 2").unwrap()].encode_utf16().count();
+
+        assert_eq!(super::find_statement_at_cursor_for_database(sql, cursor, DatabaseType::SqlServer), sql);
+    }
+
+    #[test]
+    fn sqlserver_current_statement_still_splits_begin_transaction_batches() {
+        let sql = "BEGIN TRANSACTION;\nUPDATE dbo.T SET x = 1;\nCOMMIT;";
+        let cursor = sql[..sql.find("UPDATE").unwrap()].encode_utf16().count();
+
+        assert_eq!(
+            super::find_statement_at_cursor_for_database(sql, cursor, DatabaseType::SqlServer),
+            "UPDATE dbo.T SET x = 1"
+        );
     }
 
     #[test]
