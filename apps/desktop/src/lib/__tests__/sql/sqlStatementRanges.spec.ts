@@ -2567,6 +2567,21 @@ WHERE t2.product_name = '12345'
     expect(rangeSqlTexts(ranges)).toEqual([sql]);
   });
 
+  // A bare `BEGIN` is the first keystroke of every SQL Server block: the merge
+  // reads the word after `BEGIN` to tell a block from `BEGIN TRAN`, and a
+  // missing token must not be treated as one (it crashed the splitter).
+  it("splits a lone SQL Server BEGIN without merging", () => {
+    expect(rangeSqlTexts(splitSqlStatementRanges("BEGIN", "sqlserver"))).toEqual(["BEGIN"]);
+  });
+
+  it("splits a SQL Server BEGIN terminated by a semicolon without merging", () => {
+    expect(rangeSqlTexts(splitSqlStatementRanges("BEGIN;", "sqlserver"))).toEqual(["BEGIN"]);
+  });
+
+  it("splits a SQL Server BEGIN followed by a comment without merging", () => {
+    expect(rangeSqlTexts(splitSqlStatementRanges("BEGIN -- draft block", "sqlserver"))).toEqual(["BEGIN"]);
+  });
+
   it("ends a SQL Server TRY batch without a CATCH at END TRY", () => {
     const sql = ["BEGIN TRY", "    SELECT 1;", "END TRY", "SELECT 999;"].join("\n");
     const ranges = executableStatementRanges(sql, "sqlserver");

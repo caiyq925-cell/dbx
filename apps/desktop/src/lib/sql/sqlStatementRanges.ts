@@ -1065,7 +1065,7 @@ function opensSqlServerTopLevelBlock(sql: string, from: number, databaseType?: D
   const firstToken = nextSqlWordToken(sql, from, databaseType, parameterOptions);
   if (firstToken?.word !== "BEGIN") return false;
   const secondToken = nextSqlWordToken(sql, firstToken.end, databaseType, parameterOptions);
-  return secondToken !== undefined && !SQLSERVER_NON_BLOCK_BEGIN_KEYWORDS.has(secondToken.word);
+  return secondToken != null && !SQLSERVER_NON_BLOCK_BEGIN_KEYWORDS.has(secondToken.word);
 }
 
 /**
@@ -1110,9 +1110,9 @@ function mergeSqlServerControlFlowBatches(sql: string, statements: RawStatement[
   while (pending.length > 0) {
     const first = pending.shift()!;
     const firstToken = nextSqlWordToken(sql, first.from, databaseType, parameterOptions);
-    const secondToken = firstToken ? nextSqlWordToken(sql, firstToken.end, databaseType, parameterOptions) : undefined;
+    const secondToken = firstToken ? nextSqlWordToken(sql, firstToken.end, databaseType, parameterOptions) : null;
     const firstWord = firstToken?.word;
-    const opensTopLevelBlock = firstWord === "BEGIN" && secondToken !== undefined && !SQLSERVER_NON_BLOCK_BEGIN_KEYWORDS.has(secondToken.word);
+    const opensTopLevelBlock = firstWord === "BEGIN" && secondToken != null && !SQLSERVER_NON_BLOCK_BEGIN_KEYWORDS.has(secondToken.word);
     if (firstWord !== "IF" && firstWord !== "WHILE" && !opensTopLevelBlock) {
       merged.push(first);
       continue;
