@@ -777,9 +777,13 @@ fn unsupported_pagination_type(database_type: Option<DatabaseType>) -> bool {
 
 /// Whether the engine accepts a `WITH ... SELECT` statement inside a derived
 /// table (`SELECT * FROM (WITH ... SELECT ...) t`), so a CTE can be sorted by
-/// wrapping instead of appending ORDER BY to its main query. SQL Server and
-/// the Oracle family reject WITH in a derived table; PostgreSQL, MySQL,
-/// SQLite, ClickHouse and the Hive family all accept it.
+/// wrapping instead of appending ORDER BY to its main query. SQL Server, Db2
+/// and the Oracle family reject WITH in a derived table; PostgreSQL, MySQL,
+/// SQLite and ClickHouse accept it. The Hive family also rejects it — "The
+/// WITH clause is not supported within SubQuery Blocks" — which is why the
+/// count path hoists the CTE out instead (`#8535`); engines not yet verified
+/// against a live instance stay excluded so sorting degrades to the
+/// "not sortable" message instead of a server error.
 fn derived_table_allows_cte(database_type: Option<DatabaseType>) -> bool {
     !matches!(
         database_type,
@@ -795,6 +799,14 @@ fn derived_table_allows_cte(database_type: Option<DatabaseType>) -> bool {
                 | DatabaseType::SqlServer
                 | DatabaseType::Iris
                 | DatabaseType::SapHana
+                | DatabaseType::Hive
+                | DatabaseType::Argo
+                | DatabaseType::Impala
+                | DatabaseType::Db2
+                | DatabaseType::Teradata
+                | DatabaseType::Firebird
+                | DatabaseType::Informix
+                | DatabaseType::Gbase8s
         )
     )
 }
@@ -8066,6 +8078,55 @@ WHERE u.id = picked.id;
         assert_eq!(
             result,
             ok("SELECT * FROM (WITH cte AS (SELECT 1 AS id) SELECT id FROM cte LIMIT 5 FOR UPDATE) t(\"id\") ORDER BY \"id\" ASC;"
+                .to_string())
+        );
+    }
+
+    #[test]
+    fn derived_table_cte_exclusions_track_the_count_path_special_cases() {
+        // The count path already hoists the CTE out for Hive (#8535) and wraps
+        // Db2 specially because both engines reject `WITH` inside a derived
+        // table; the sort wrapper must not feed them that shape.
+        for database_type in [DatabaseType::Hive, DatabaseType::Argo, DatabaseType::Impala, DatabaseType::Db2] {
+            assert!(
+                !derived_table_allows_cte(Some(database_type)),
+                "{database_type:?} must stay excluded from CTE-in-derived-table sorting"
+            );
+        }
+        for database_type in [DatabaseType::Postgres, DatabaseType::Mysql, DatabaseType::Sqlite] {
+            assert!(derived_table_allows_cte(Some(database_type)));
+        }
+    }
+
+    #[test]
+    fn rejects_with_query_sorting_for_cte_rejecting_engines() {
+        // Hive rejects WITH inside subquery blocks outright and Db2's
+        // fullselect grammar has no nested WITH (SQL0199N), so a row-limited
+        // CTE stays unsupported there instead of producing a server error.
+        for (original_sql, database_type) in [
+            ("WITH cte AS (SELECT 1 AS id) SELECT id FROM cte LIMIT 10", DatabaseType::Hive),
+            ("WITH cte AS (SELECT 1 AS id) SELECT id FROM cte FETCH FIRST 10 ROWS ONLY", DatabaseType::Db2),
+        ] {
+            let result =
+                sorted_cte_sql(original_sql, Some(database_type), &["id"], 0, QuerySortDirection::Asc, Vec::new());
+            assert_eq!(result, err("unsupported"), "unexpected sort result for {database_type:?}");
+        }
+    }
+
+    #[test]
+    fn sorts_with_query_with_limit_by_wrapping_for_mysql() {
+        let result = sorted_cte_sql(
+            "with tmp as (select 1 as a) select a from tmp limit 10",
+            Some(DatabaseType::Mysql),
+            &["a"],
+            0,
+            QuerySortDirection::Asc,
+            Vec::new(),
+        );
+
+        assert_eq!(
+            result,
+            ok("SELECT * FROM (with tmp as (select 1 as a) select a from tmp limit 10) t ORDER BY `a` ASC;"
                 .to_string())
         );
     }
