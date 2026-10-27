@@ -994,7 +994,52 @@ impl SqlStatementSplitter {
                         // `END [TRY]`.
                         self.buffer.push(ch);
                         if sqlserver_control_flow_batch_is_complete(&self.buffer) {
-                            self.push_current_statement(&mut statements);
+                            // A final `END` without its own `;` shares the
+                            // fragment with the next statement; the boundary
+                            // sits right after that `END` instead (TS parity).
+                            // An `END` directly followed by this `;` keeps the
+                            // historical shape: the batch ends here with its
+                            // terminating semicolon.
+                            let body_end = self.buffer.len() - ch.len_utf8();
+                            let body = self.buffer[..body_end].to_string();
+                            let mut boundaries = Vec::new();
+                            let mut cursor = 0usize;
+                            while let Some(relative) = sqlserver_control_flow_batch_boundary(&body[cursor..]) {
+                                if cursor + relative >= body.len() {
+                                    break;
+                                }
+                                cursor += relative;
+                                boundaries.push(cursor);
+                            }
+                            if boundaries.is_empty() {
+                                self.push_current_statement(&mut statements);
+                            } else {
+                                let mut piece_from = 0usize;
+                                for boundary_end in &boundaries {
+                                    self.buffer.clear();
+                                    self.buffer.push_str(&body[piece_from..*boundary_end]);
+                                    self.push_current_statement(&mut statements);
+                                    piece_from = *boundary_end;
+                                }
+                                let trailing = &body[piece_from..];
+                                if !trailing.trim().is_empty() {
+                                    self.buffer.clear();
+                                    self.buffer.push_str(trailing);
+                                    if keeps_sqlserver_control_flow_batch(self.options, trailing) {
+                                        // A new batch in the remainder keeps the
+                                        // terminating `;` when complete and this
+                                        // `;` when it is still mid-typing.
+                                        self.buffer.push(ch);
+                                        if sqlserver_control_flow_batch_is_complete(trailing) {
+                                            self.push_current_statement(&mut statements);
+                                        }
+                                    } else {
+                                        self.push_current_statement(&mut statements);
+                                    }
+                                } else {
+                                    self.buffer.clear();
+                                }
+                            }
                         }
                     } else {
                         self.push_current_statement(&mut statements);
@@ -1693,7 +1738,58 @@ fn split_sql_statement_ranges_with_options(sql: &str, options: SqlParsingOptions
                             i += ch.len_utf8();
                             continue;
                         }
-                        push_statement_range(&mut ranges, sql, start, i + ch.len_utf8(), options);
+                        // A final `END` without its own `;` shares the fragment
+                        // with the next statement; the boundary sits right after
+                        // that `END` instead (TS parity with
+                        // `sqlStatementRanges.ts`). An `END` directly followed
+                        // by this `;` keeps the historical range shape.
+                        let body = &sql[start..i];
+                        let mut boundaries = Vec::new();
+                        let mut cursor = 0usize;
+                        while let Some(relative) = sqlserver_control_flow_batch_boundary(&body[cursor..]) {
+                            if cursor + relative >= body.len() {
+                                break;
+                            }
+                            cursor += relative;
+                            boundaries.push(cursor);
+                        }
+                        if boundaries.is_empty() {
+                            push_statement_range(&mut ranges, sql, start, i + ch.len_utf8(), options);
+                        } else {
+                            let mut piece_from = 0usize;
+                            for boundary_end in &boundaries {
+                                push_statement_range(
+                                    &mut ranges,
+                                    sql,
+                                    start + piece_from,
+                                    start + boundary_end,
+                                    options,
+                                );
+                                piece_from = *boundary_end;
+                            }
+                            let trailing = &body[piece_from..];
+                            if !trailing.trim().is_empty() {
+                                if keeps_sqlserver_control_flow_batch(options, trailing) {
+                                    if sqlserver_control_flow_batch_is_complete(trailing) {
+                                        push_statement_range(
+                                            &mut ranges,
+                                            sql,
+                                            start + piece_from,
+                                            i + ch.len_utf8(),
+                                            options,
+                                        );
+                                    } else {
+                                        // The remainder opens a new batch that is
+                                        // still mid-typing: this `;` stays inside it.
+                                        start += piece_from;
+                                        i += ch.len_utf8();
+                                        continue;
+                                    }
+                                } else {
+                                    push_statement_range(&mut ranges, sql, start + piece_from, i, options);
+                                }
+                            }
+                        }
                     } else {
                         push_statement_range(&mut ranges, sql, start, i, options);
                     }
@@ -3513,6 +3609,95 @@ fn sqlserver_control_flow_open_blocks(sql: &str) -> usize {
 /// `;` and stays whole.
 fn sqlserver_control_flow_batch_is_complete(sql: &str) -> bool {
     sqlserver_control_flow_open_blocks(sql) == 0
+}
+
+/// Byte offset just after the `END`/`END TRY`/`END CATCH` that closes the block
+/// a `;`-fragment carried into it, when that closure is final (not followed by
+/// `ELSE`). T-SQL semicolons are optional, so a batch whose final `END` has no
+/// trailing `;` shares its fragment with the next statement; the statement
+/// boundary then sits right after the closing token instead of at the next
+/// `;`. Mirrors `scanSqlServerControlFlow`'s `closedAt`/`wordAfterClose` in
+/// `sqlStatementRanges.ts`: a block opened and closed inside one `;`-free run
+/// has no boundary (the whole run stays one statement), and a closure followed
+/// by `ELSE` only continues the same `IF`, so a later closure in the same
+/// fragment replaces it.
+fn sqlserver_control_flow_batch_boundary(sql: &str) -> Option<usize> {
+    let tokens = sqlserver_top_level_tokens(sql);
+    let mut index = 0usize;
+    let mut fragment_start_depth = 0usize;
+    while index < tokens.len() {
+        // Scan one `;`-delimited fragment with the depth the previous fragment
+        // left open; only a closure of that carried depth is a boundary.
+        let mut depth = fragment_start_depth;
+        let mut carried_try = false;
+        let mut boundary: Option<(usize, &str)> = None;
+        while index < tokens.len() {
+            let token = &tokens[index];
+            if token.is_word(";") {
+                index += 1;
+                break;
+            }
+            if token.is_word("BEGIN") {
+                if sqlserver_begins_block(&tokens, index) {
+                    if carried_try {
+                        // `BEGIN CATCH` continues the carried TRY block.
+                        carried_try = false;
+                    } else {
+                        depth += 1;
+                    }
+                }
+                index += 1;
+                continue;
+            }
+            if token.is_word("CASE") {
+                depth += 1;
+                index += 1;
+                continue;
+            }
+            if !token.is_word("END") {
+                index += 1;
+                continue;
+            }
+            let next = tokens.get(index + 1);
+            // `END CONVERSATION`/`END DIALOG` close a conversation, not a block.
+            if next.is_some_and(|next| next.is_word("CONVERSATION") || next.is_word("DIALOG")) {
+                index += 1;
+                continue;
+            }
+            if next.is_some_and(|next| next.is_word("TRY"))
+                && tokens.get(index + 2).is_some_and(|token| token.is_word("BEGIN"))
+                && tokens.get(index + 3).is_some_and(|token| token.is_word("CATCH"))
+            {
+                // `END TRY BEGIN CATCH` keeps the pair in one batch.
+                carried_try = true;
+                index += 1;
+                continue;
+            }
+            depth = depth.saturating_sub(1);
+            carried_try = false;
+            if fragment_start_depth > 0 && depth == 0 {
+                // `END TRY`/`END CATCH` are two-token closers: the boundary sits
+                // after the pair, and the word after the pair decides finality.
+                let paired = next.is_some_and(|next| next.is_word("TRY") || next.is_word("CATCH"));
+                let (end_offset, word_after) = if paired {
+                    (tokens[index + 1].end, tokens.get(index + 2).map_or("", |token| token.text))
+                } else {
+                    (token.end, next.map_or("", |token| token.text))
+                };
+                if boundary.as_ref().is_none_or(|(_, word)| word.eq_ignore_ascii_case("ELSE")) {
+                    boundary = Some((end_offset, word_after));
+                }
+            }
+            index += 1;
+        }
+        if let Some((offset, word_after)) = boundary {
+            if !word_after.eq_ignore_ascii_case("ELSE") {
+                return Some(offset);
+            }
+        }
+        fragment_start_depth = depth;
+    }
+    None
 }
 
 fn starts_with_oracle_style_routine_body(sql: &str) -> bool {
@@ -7774,6 +7959,107 @@ END CATCH;";
         assert_eq!(
             split_sql_statements_for_database(sql, DatabaseType::SqlServer),
             vec!["BEGIN TRANSACTION", "UPDATE dbo.T SET x = 1", "COMMIT TRANSACTION"]
+        );
+    }
+
+    // The four specs below mirror `sqlStatementRanges.spec.ts` so the backend
+    // splitter and the editor range scanner agree on where a control-flow
+    // batch ends when its final `END` has no semicolon of its own.
+    #[test]
+    fn sqlserver_statement_splitter_ends_single_line_if_batch_before_next_statement() {
+        let sql = "IF @x = 1 BEGIN SELECT 1; END\nSELECT 999;";
+
+        assert_eq!(
+            split_sql_statements_for_database(sql, DatabaseType::SqlServer),
+            vec!["IF @x = 1 BEGIN SELECT 1; END", "SELECT 999"]
+        );
+    }
+
+    #[test]
+    fn sqlserver_statement_splitter_ends_try_batch_without_catch_at_end_try() {
+        let sql = "BEGIN TRY\n    SELECT 1;\nEND TRY\nSELECT 999;";
+
+        assert_eq!(
+            split_sql_statements_for_database(sql, DatabaseType::SqlServer),
+            vec!["BEGIN TRY\n    SELECT 1;\nEND TRY", "SELECT 999"]
+        );
+    }
+
+    #[test]
+    fn sqlserver_statement_splitter_ends_if_else_batch_before_next_statement() {
+        let batch = "\
+IF NOT EXISTS (SELECT 1 FROM dbo.T WHERE n = N'x')
+BEGIN
+    SELECT 1;
+END
+ELSE
+BEGIN
+    SELECT 2;
+END";
+
+        assert_eq!(
+            split_sql_statements_for_database(&format!("{batch}\nSELECT 999;"), DatabaseType::SqlServer),
+            vec![batch.to_string(), "SELECT 999".to_string()]
+        );
+    }
+
+    #[test]
+    fn sqlserver_statement_splitter_ends_if_else_batch_at_else_branch_end_without_semicolon() {
+        let batch = "\
+IF @x = 1
+BEGIN
+    SELECT 1;
+END
+ELSE
+BEGIN
+    SELECT 2
+END";
+
+        assert_eq!(
+            split_sql_statements_for_database(&format!("{batch}\nSELECT 999;"), DatabaseType::SqlServer),
+            vec![batch.to_string(), "SELECT 999".to_string()]
+        );
+    }
+
+    #[test]
+    fn sqlserver_statement_splitter_keeps_case_end_inside_if_batch() {
+        // `CASE ... END` must not close the surrounding `BEGIN` block, so the
+        // batch still ends at its own `END`, before the next statement.
+        let sql = "IF @x = 1 BEGIN SELECT CASE WHEN 1 = 1 THEN 'a' ELSE 'b' END AS v; END\nSELECT 999;";
+
+        assert_eq!(
+            split_sql_statements_for_database(sql, DatabaseType::SqlServer),
+            vec!["IF @x = 1 BEGIN SELECT CASE WHEN 1 = 1 THEN 'a' ELSE 'b' END AS v; END", "SELECT 999",]
+        );
+    }
+
+    #[test]
+    fn sqlserver_statement_splitter_ignores_end_conversation_in_batches() {
+        let sql = "IF @x = 1 BEGIN SELECT 1; END\nEND CONVERSATION @handle;\nSELECT 999;";
+
+        assert_eq!(
+            split_sql_statements_for_database(sql, DatabaseType::SqlServer),
+            vec!["IF @x = 1 BEGIN SELECT 1; END", "END CONVERSATION @handle", "SELECT 999",]
+        );
+    }
+
+    #[test]
+    fn sqlserver_statement_splitter_keeps_nested_try_catch_batch_whole() {
+        let batch = "\
+WHILE @i < 10
+BEGIN
+    BEGIN TRY
+        SELECT 1;
+    END TRY
+    BEGIN CATCH
+        SET @i = @i + 1;
+    END CATCH
+END";
+        let sql = format!("{batch}\nSELECT 999;");
+
+        assert_eq!(
+            split_sql_statements_for_database(&sql, DatabaseType::SqlServer),
+            vec![batch.to_string(), "SELECT 999".to_string()]
         );
     }
 
