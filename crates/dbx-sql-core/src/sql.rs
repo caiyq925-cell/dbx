@@ -211,6 +211,13 @@ struct SqlDialectProfile {
     supports_firebird_routine_blocks: bool,
     supports_go_batch_separator: bool,
     keeps_sqlserver_module_batch_at_cursor: bool,
+    /// Whether a top-level T-SQL control-flow batch (`IF`/`WHILE` with a block
+    /// body or `ELSE`, or a top-level `BEGIN ... END` block) stays whole in the
+    /// `;`-statement splitter. The SQL Server profile needs it because T-SQL
+    /// does not end a block at a semicolon; the generic JDBC profile must not
+    /// lose it, or the backend re-splits the TRY/CATCH batches the editor
+    /// already kept together (#13514).
+    keeps_sqlserver_control_flow_batches: bool,
     preserves_tdsql_leading_directives: bool,
     requires_whitespace_after_line_comment_dashes: bool,
     supports_psql_control_commands: bool,
@@ -236,6 +243,7 @@ impl Default for SqlDialectProfile {
             supports_firebird_routine_blocks: false,
             supports_go_batch_separator: false,
             keeps_sqlserver_module_batch_at_cursor: false,
+            keeps_sqlserver_control_flow_batches: false,
             preserves_tdsql_leading_directives: false,
             requires_whitespace_after_line_comment_dashes: false,
             supports_psql_control_commands: false,
@@ -397,6 +405,7 @@ impl SqlDialectProfile {
         Self {
             supports_go_batch_separator: true,
             keeps_sqlserver_module_batch_at_cursor: true,
+            keeps_sqlserver_control_flow_batches: true,
             supports_nested_block_comments: true,
             ..Self::default()
         }
@@ -976,6 +985,15 @@ impl SqlStatementSplitter {
                     {
                         self.buffer.push(ch);
                         if firebird_routine_block_is_complete(&self.buffer) {
+                            self.push_current_statement(&mut statements);
+                        }
+                    } else if keeps_sqlserver_control_flow_batch(self.options, &self.buffer) {
+                        // T-SQL does not end a control-flow batch at a semicolon
+                        // (#9336, #13051, #13514): the inner `;` stays in the
+                        // batch and the statement ends after the block's final
+                        // `END [TRY]`.
+                        self.buffer.push(ch);
+                        if sqlserver_control_flow_batch_is_complete(&self.buffer) {
                             self.push_current_statement(&mut statements);
                         }
                     } else {
@@ -1663,6 +1681,15 @@ fn split_sql_statement_ranges_with_options(sql: &str, options: SqlParsingOptions
                         && starts_with_firebird_routine_block(&sql[start..i])
                     {
                         if !firebird_routine_block_is_complete(&sql[start..i + ch.len_utf8()]) {
+                            i += ch.len_utf8();
+                            continue;
+                        }
+                        push_statement_range(&mut ranges, sql, start, i + ch.len_utf8(), options);
+                    } else if keeps_sqlserver_control_flow_batch(options, &sql[start..i]) {
+                        // T-SQL does not end a control-flow batch at a semicolon
+                        // (#9336, #13051): the inner `;` stays in the batch and
+                        // the statement ends at the block's final `END [TRY]`.
+                        if !sqlserver_control_flow_batch_is_complete(&sql[start..i + ch.len_utf8()]) {
                             i += ch.len_utf8();
                             continue;
                         }
@@ -3407,6 +3434,85 @@ fn keeps_oracle_style_block_together(options: SqlParsingOptions, statement_head:
         return starts_with_oracle_plsql_block(statement_head);
     }
     options.profile.supports_oracle_style_routine_bodies && starts_with_oracle_style_routine_body(statement_head)
+}
+
+/// Whether the statement opened so far is a T-SQL control-flow batch that the
+/// `;`-statement splitter must keep whole: an `IF`/`WHILE` batch (its block
+/// body keeps the splitter going; a branchless one is a single statement
+/// anyway), or a top-level `BEGIN` that opens a real block (`BEGIN TRY ... END
+/// TRY BEGIN CATCH ... END CATCH` counts as one). `BEGIN TRAN[SACTION]` and
+/// friends have no matching `END` and stay split per statement. Only meaningful
+/// when the profile keeps such batches (`keeps_sqlserver_control_flow_batches`).
+fn keeps_sqlserver_control_flow_batch(options: SqlParsingOptions, statement_head: &str) -> bool {
+    if !options.profile.keeps_sqlserver_control_flow_batches {
+        return false;
+    }
+    let tokens = sqlserver_top_level_tokens(statement_head);
+    let Some(first) = tokens.first() else {
+        return false;
+    };
+    if first.is_word("IF") || first.is_word("WHILE") {
+        return true;
+    }
+    first.is_word("BEGIN") && sqlserver_begins_block(&tokens, 0)
+}
+
+/// Top-level `BEGIN`/`CASE` blocks the T-SQL statement has left open at its
+/// end. `END TRY` immediately followed by `BEGIN CATCH` continues the TRY
+/// block, so the pair keeps the depth open instead of ending the batch
+/// (#13051). Tokens inside strings, bracketed identifiers, comments and
+/// parentheses are ignored, so a nested statement's own blocks do not matter.
+fn sqlserver_control_flow_open_blocks(sql: &str) -> usize {
+    let tokens = sqlserver_top_level_tokens(sql);
+    let mut depth = 0usize;
+    let mut carried_try = false;
+    for (index, token) in tokens.iter().enumerate() {
+        if token.is_word("BEGIN") {
+            if !sqlserver_begins_block(&tokens, index) {
+                continue;
+            }
+            if carried_try {
+                // `BEGIN CATCH` continues the carried TRY block: the depth the
+                // `END TRY` left open is consumed here, not extended.
+                carried_try = false;
+            } else {
+                depth += 1;
+            }
+            continue;
+        }
+        if token.is_word("CASE") {
+            depth += 1;
+            continue;
+        }
+        if !token.is_word("END") {
+            continue;
+        }
+        let next = tokens.get(index + 1);
+        // `END CONVERSATION`/`END DIALOG` close a conversation, not a block.
+        if next.is_some_and(|next| next.is_word("CONVERSATION") || next.is_word("DIALOG")) {
+            continue;
+        }
+        if next.is_some_and(|next| next.is_word("TRY"))
+            && tokens.get(index + 2).is_some_and(|token| token.is_word("BEGIN"))
+            && tokens.get(index + 3).is_some_and(|token| token.is_word("CATCH"))
+        {
+            // `END TRY` immediately followed by `BEGIN CATCH`: both halves are
+            // one batch, so the CATCH block continues the TRY block's span.
+            carried_try = true;
+            continue;
+        }
+        depth = depth.saturating_sub(1);
+        carried_try = false;
+    }
+    depth
+}
+
+/// Whether the buffered control-flow batch is complete: every top-level
+/// `BEGIN`/`CASE` it opened has been closed, so this `;` is a real statement
+/// boundary. A batch still open — including one that is mid-typing — keeps the
+/// `;` and stays whole.
+fn sqlserver_control_flow_batch_is_complete(sql: &str) -> bool {
+    sqlserver_control_flow_open_blocks(sql) == 0
 }
 
 fn starts_with_oracle_style_routine_body(sql: &str) -> bool {
@@ -7589,6 +7695,85 @@ END CATCH;";
         assert_eq!(
             split_sql_statements_for_database(sql, DatabaseType::Mysql),
             vec!["SELECT 1", "# mysql comment\n\nSELECT 2 # trailing comment"]
+        );
+    }
+
+    // #13514: a JDBC SQL Server connection splits with the SQL Server profile
+    // (the mapped `statement_split_database_type`), so the reported script keeps
+    // its TRY/CATCH batch whole while the leading `SET` stays its own statement.
+    #[test]
+    fn sqlserver_statement_splitter_keeps_try_catch_batch_after_leading_statement() {
+        let sql = "\
+SET XACT_ABORT ON;
+
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    UPDATE [dbo].[Documents]
+    SET [Deleted] = 0
+    WHERE [Deleted] = 1;
+
+    DECLARE @Updated int = @@ROWCOUNT;
+
+    IF EXISTS (SELECT 1 FROM [dbo].[Documents] WHERE [Deleted] = 1)
+        THROW 50001, N'Rows with Deleted = 1 still exist.', 1;
+
+    COMMIT TRANSACTION;
+
+    SELECT N'OK' AS Result, @Updated AS RowsUpdated;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+    THROW;
+END CATCH;";
+        let block = &sql[sql.find("BEGIN TRY").unwrap()..];
+
+        assert_eq!(
+            split_sql_statements_for_database(sql, DatabaseType::SqlServer),
+            vec!["SET XACT_ABORT ON".to_string(), block.to_string()]
+        );
+    }
+
+    // The same script through the generic JDBC profile (no SQL Server signals)
+    // keeps its historical split shape: the Oracle-style routine-body handling
+    // glues the block opener to the first inner statement, and the rest splits
+    // per statement. The `statement_split_database_type` mapping is what opts a
+    // connection into the SQL Server rules instead.
+    #[test]
+    fn jdbc_statement_splitter_still_splits_try_catch_batches() {
+        let sql = "BEGIN TRY\n    BEGIN TRANSACTION;\n    UPDATE dbo.T SET x = 1;\nEND TRY\nBEGIN CATCH\n    THROW;\nEND CATCH;";
+
+        assert_eq!(
+            split_sql_statements_for_database(sql, DatabaseType::Jdbc),
+            vec![
+                "BEGIN TRY\n    BEGIN TRANSACTION",
+                "UPDATE dbo.T SET x = 1",
+                "END TRY\nBEGIN CATCH\n    THROW",
+                "END CATCH",
+            ]
+        );
+    }
+
+    #[test]
+    fn sqlserver_statement_splitter_keeps_if_block_batch_whole() {
+        let sql = "IF NOT EXISTS (SELECT 1 FROM sys.databases WHERE name = N'demo')\nBEGIN\n    CREATE DATABASE demo;\nEND;\nSELECT 1;";
+
+        assert_eq!(
+            split_sql_statements_for_database(sql, DatabaseType::SqlServer),
+            vec![
+                "IF NOT EXISTS (SELECT 1 FROM sys.databases WHERE name = N'demo')\nBEGIN\n    CREATE DATABASE demo;\nEND;",
+                "SELECT 1",
+            ]
+        );
+    }
+
+    #[test]
+    fn sqlserver_statement_splitter_still_splits_begin_transaction_batches() {
+        let sql = "BEGIN TRANSACTION;\nUPDATE dbo.T SET x = 1;\nCOMMIT TRANSACTION;";
+
+        assert_eq!(
+            split_sql_statements_for_database(sql, DatabaseType::SqlServer),
+            vec!["BEGIN TRANSACTION", "UPDATE dbo.T SET x = 1", "COMMIT TRANSACTION"]
         );
     }
 
