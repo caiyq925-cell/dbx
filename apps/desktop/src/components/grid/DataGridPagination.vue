@@ -171,6 +171,7 @@ function handlePageInputKeydown(event: KeyboardEvent) {
       <span v-if="infiniteScrollAllLoaded" class="text-xs text-muted-foreground shrink-0">{{ t("grid.allLoaded") }}</span>
     </template>
     <template v-if="paginationEnabled && !infiniteScrollEnabled && !loadAllRowsActive">
+      <span v-if="typeof maxPage === 'number'" class="shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground" data-grid-total-pages>{{ t("grid.totalPages", { count: maxPage }) }}</span>
       <LightDropdown
         :model-value="String(pageSize)"
         :items="pageSizeMenuItems"

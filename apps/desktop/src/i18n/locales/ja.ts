@@ -3559,6 +3559,7 @@ export default withEnglishFallback({
     rowNumberModeSource: "元の行番号",
     emptyStringValue: "空文字",
     jumpToPage: "ページ番号に移動",
+    totalPages: "全 {count} ページ",
     importBinaryValue: "ファイルからインポート",
     binaryImportApplied: "{count} バイトをインポートしました。変更を保存するとデータベースに書き込まれます。",
     binaryImportFailed: "ファイルのインポートに失敗しました：{message}",

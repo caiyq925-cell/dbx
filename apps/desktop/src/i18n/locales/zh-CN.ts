@@ -3495,6 +3495,7 @@ export default withEnglishFallback({
     filterChangedRows: "变更项",
     page: "第 {page} 页",
     jumpToPage: "跳转到页码",
+    totalPages: "共 {count} 页",
     rowsPerPage: "每页行数",
     customRowsPerPage: "自定义行数",
     applyPageSize: "应用",

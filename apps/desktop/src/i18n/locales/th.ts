@@ -3404,6 +3404,7 @@ export default withEnglishFallback({
     filterChangedRows: "เปลี่ยนแปลงแล้ว",
     page: "หน้า {page}",
     jumpToPage: "ไปยังหน้า",
+    totalPages: "{count} หน้า",
     rowsPerPage: "แถวต่อหน้า",
     customRowsPerPage: "แถวกำหนดเอง",
     applyPageSize: "ใช้",

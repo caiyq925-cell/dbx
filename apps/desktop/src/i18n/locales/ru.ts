@@ -3254,6 +3254,7 @@ export default withEnglishFallback({
     filterChangedRows: "Изменённые",
     page: "Страница {page}",
     jumpToPage: "Перейти к странице",
+    totalPages: "Всего страниц: {count}",
     rowsPerPage: "Строк на странице",
     customRowsPerPage: "Своё число строк",
     applyPageSize: "Применить",

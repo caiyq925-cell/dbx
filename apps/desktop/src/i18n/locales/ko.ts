@@ -3134,6 +3134,7 @@ export default withEnglishFallback({
     filterChangedRows: "변경됨",
     page: "{page}페이지",
     jumpToPage: "페이지로 이동",
+    totalPages: "전체 {count}페이지",
     rowsPerPage: "페이지당 행",
     customRowsPerPage: "사용자 지정 행",
     applyPageSize: "적용",

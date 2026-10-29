@@ -3664,6 +3664,7 @@ export default withEnglishFallback({
     xlsxFilterPrompt: "Seleccione si el Excel exportado incluye filtros:",
     xlsxIncludeAutoFilter: "Incluir filtros",
     jumpToPage: "Ir a la página",
+    totalPages: "Total {count} páginas",
     importBinaryValue: "Importar desde archivo",
     binaryImportApplied: "Se importaron {count} bytes, que se escribirán en la base de datos al guardar los cambios.",
     binaryImportFailed: "Error al importar el archivo: {message}",
